@@ -19,31 +19,42 @@ IMAGE_FOLDER = Path("images")
 # 输出结果的文件夹
 OUTPUT_FOLDER = Path("results")
 
-# 每张图片提取多少个主要颜色
+# 每张图片先提取多少个主要蓝色
 COLOURS_PER_IMAGE = 10
 
-# 最终输出多少种颜色
-# 包含固定目标品牌色 #105CF4
+# 最终从全部图片中提取多少种蓝色
 FINAL_COLOUR_COUNT = 10
 
-# 每张图片最多采样多少个像素
+# 每张图片最多采样多少个蓝色像素
 MAX_PIXELS_PER_IMAGE = 15000
 
-# 图片像素过滤参数
-# HSV Value 小于该值时视为过暗
-MIN_VALUE = 0.22
 
-# HSV Value 大于该值时视为接近纯白
+# ============================================================
+# 2. 蓝色像素过滤参数
+# ============================================================
+
+# HSV 明度低于这个值，认为太暗
+MIN_VALUE = 0.25
+
+# HSV 明度高于这个值，认为太接近白色或曝光高光
 MAX_VALUE = 0.98
 
-# 饱和度低于该值时视为接近灰色
-MIN_SATURATION = 0.18
+# 饱和度低于这个值，认为颜色太灰
+# 这次图片本身偏高饱和，所以提高到 0.40
+MIN_SATURATION = 0.40
 
-# 只分析蓝色和青蓝色
-
-BLUE_HUE_MIN = 180
-
-BLUE_HUE_MAX = 245
+# 只保留蓝色色相
+#
+# 180° 左右：青色
+# 190°～210°：天蓝、海蓝
+# 210°～230°：标准蓝
+# 230°～250°：深蓝、偏紫蓝
+#
+# 设置为 190～250：
+# 可以过滤掉大部分绿色和青绿色，
+# 同时保留海蓝、天空蓝、钴蓝和深蓝。
+BLUE_HUE_MIN = 190
+BLUE_HUE_MAX = 250
 
 # 支持的图片格式
 SUPPORTED_EXTENSIONS = {
@@ -56,12 +67,12 @@ SUPPORTED_EXTENSIONS = {
 
 
 # ============================================================
-# 2. 工具函数
+# 3. 工具函数
 # ============================================================
 
 def rgb_to_hex(rgb: np.ndarray) -> str:
     """
-    把 RGB 转换为 HEX。
+    RGB 转 HEX。
 
     示例：
     [16, 92, 244] -> #105CF4
@@ -80,17 +91,14 @@ def rgb_to_hex(rgb: np.ndarray) -> str:
     )
 
 
-
-
-def get_text_colour(
-    rgb: np.ndarray
-) -> str:
+def get_text_colour(rgb: np.ndarray) -> str:
     """
-    判断色块文字应该显示为黑色还是白色。
+    根据色块亮度决定显示黑色文字还是白色文字。
     """
 
     rgb_normalised = (
-        np.asarray(rgb, dtype=np.float32) / 255.0
+        np.asarray(rgb, dtype=np.float32)
+        / 255.0
     )
 
     red, green, blue = rgb_normalised
@@ -104,15 +112,14 @@ def get_text_colour(
     return "black" if luminance > 0.55 else "white"
 
 
-def calculate_hue(
-    rgb: np.ndarray
-) -> float:
+def calculate_hue(rgb: np.ndarray) -> float:
     """
     计算 HSV 色相角度，范围 0～360。
     """
 
     red, green, blue = (
-        np.asarray(rgb, dtype=np.float32) / 255.0
+        np.asarray(rgb, dtype=np.float32)
+        / 255.0
     )
 
     hue, _, _ = colorsys.rgb_to_hsv(
@@ -124,15 +131,14 @@ def calculate_hue(
     return hue * 360
 
 
-def calculate_saturation(
-    rgb: np.ndarray
-) -> float:
+def calculate_saturation(rgb: np.ndarray) -> float:
     """
     计算 HSV 饱和度，范围 0～100。
     """
 
     red, green, blue = (
-        np.asarray(rgb, dtype=np.float32) / 255.0
+        np.asarray(rgb, dtype=np.float32)
+        / 255.0
     )
 
     _, saturation, _ = colorsys.rgb_to_hsv(
@@ -144,15 +150,14 @@ def calculate_saturation(
     return saturation * 100
 
 
-def calculate_brightness(
-    rgb: np.ndarray
-) -> float:
+def calculate_brightness(rgb: np.ndarray) -> float:
     """
     计算 HSV 明度，范围 0～100。
     """
 
     red, green, blue = (
-        np.asarray(rgb, dtype=np.float32) / 255.0
+        np.asarray(rgb, dtype=np.float32)
+        / 255.0
     )
 
     _, _, brightness = colorsys.rgb_to_hsv(
@@ -162,11 +167,13 @@ def calculate_brightness(
     )
 
     return brightness * 100
+
+
 def rgb_array_to_hsv_values(
     rgb_colours: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    批量计算 RGB 颜色的 HSV。
+    批量将 RGB 数组转换为 HSV。
 
     输入：
     N × 3 的 RGB 数组，范围 0～255。
@@ -178,7 +185,10 @@ def rgb_array_to_hsv_values(
     """
 
     rgb_normalised = (
-        np.asarray(rgb_colours, dtype=np.float32)
+        np.asarray(
+            rgb_colours,
+            dtype=np.float32
+        )
         / 255.0
     )
 
@@ -272,27 +282,58 @@ def rgb_array_to_hsv_values(
     return hue, saturation, value
 
 
+def is_valid_blue(rgb: np.ndarray) -> bool:
+    """
+    检查某个 RGB 颜色是否属于目标蓝色色域。
+    """
+
+    hue = calculate_hue(rgb)
+
+    saturation = (
+        calculate_saturation(rgb)
+        / 100.0
+    )
+
+    brightness = (
+        calculate_brightness(rgb)
+        / 100.0
+    )
+
+    return (
+        BLUE_HUE_MIN <= hue <= BLUE_HUE_MAX
+        and saturation >= MIN_SATURATION
+        and MIN_VALUE <= brightness <= MAX_VALUE
+    )
+
+
 # ============================================================
-# 3. 读取和过滤图片像素
+# 4. 读取图片并过滤像素
 # ============================================================
 
 def load_image_pixels(
     image_path: Path
 ) -> np.ndarray:
     """
-    读取海洋图片，并且只保留蓝色色域像素。
+    读取图片，只保留符合条件的蓝色像素。
 
     会过滤：
+
     1. 黑色和过暗像素；
-    2. 白色高光；
+    2. 白色和曝光高光；
     3. 灰色和低饱和颜色；
-    4. 棕色、绿色、红色等非蓝色像素。
+    4. 红色、橙色、黄色；
+    5. 绿色和青绿色；
+    6. 紫色和洋红色。
     """
 
     with Image.open(image_path) as image:
-        image = ImageOps.exif_transpose(image)
+        image = ImageOps.exif_transpose(
+            image
+        )
+
         image = image.convert("RGBA")
 
+        # 透明图片统一铺在白色背景上
         white_background = Image.new(
             "RGBA",
             image.size,
@@ -304,7 +345,10 @@ def load_image_pixels(
             image
         ).convert("RGB")
 
-        image.thumbnail((500, 500))
+        # 缩小图片，降低计算量
+        image.thumbnail(
+            (500, 500)
+        )
 
         pixels = np.asarray(
             image,
@@ -317,31 +361,31 @@ def load_image_pixels(
         )
 
     hue, saturation, value = (
-        rgb_array_to_hsv_values(pixels)
+        rgb_array_to_hsv_values(
+            pixels
+        )
     )
 
-    # 只保留有效蓝色
-    valid_colour_mask = (
-        (value > MIN_VALUE)
-        & (value < MAX_VALUE)
-        & (saturation > MIN_SATURATION)
-        & (hue >= BLUE_HUE_MIN)
+    # 只保留符合条件的高饱和蓝色像素
+    blue_mask = (
+        (hue >= BLUE_HUE_MIN)
         & (hue <= BLUE_HUE_MAX)
+        & (saturation >= MIN_SATURATION)
+        & (value >= MIN_VALUE)
+        & (value <= MAX_VALUE)
     )
 
     filtered_pixels = pixels[
-        valid_colour_mask
+        blue_mask
     ]
 
     if len(filtered_pixels) == 0:
         raise ValueError(
-            "图片中没有符合条件的蓝色像素。"
+            "图片中没有符合条件的高饱和蓝色像素。"
         )
 
-    if (
-        len(filtered_pixels)
-        > MAX_PIXELS_PER_IMAGE
-    ):
+    # 每张图片最多采样固定数量，避免大图影响过大
+    if len(filtered_pixels) > MAX_PIXELS_PER_IMAGE:
         random_generator = (
             np.random.default_rng(42)
         )
@@ -354,15 +398,17 @@ def load_image_pixels(
             )
         )
 
-        filtered_pixels = filtered_pixels[
-            selected_indices
-        ]
+        filtered_pixels = (
+            filtered_pixels[
+                selected_indices
+            ]
+        )
 
     return filtered_pixels
 
 
 # ============================================================
-# 4. 单张图片颜色提取
+# 5. 从单张图片提取主要蓝色
 # ============================================================
 
 def extract_image_colours(
@@ -370,7 +416,7 @@ def extract_image_colours(
     colour_count: int = COLOURS_PER_IMAGE
 ) -> list[dict]:
     """
-    对单张图片进行 Lab 空间 K-Means 聚类。
+    在 Lab 色彩空间中对单张图片的蓝色像素聚类。
     """
 
     rgb_pixels = load_image_pixels(
@@ -382,10 +428,14 @@ def extract_image_colours(
     )
 
     lab_pixels = rgb2lab(
-        rgb_normalised.reshape(-1, 1, 3)
+        rgb_normalised.reshape(
+            -1,
+            1,
+            3
+        )
     ).reshape(-1, 3)
 
-    # 防止聚类数大于实际颜色数
+    # 计算实际存在多少种不同颜色
     unique_colour_count = len(
         np.unique(
             np.round(
@@ -403,7 +453,7 @@ def extract_image_colours(
 
     if actual_cluster_count < 1:
         raise ValueError(
-            "图片无法提取颜色。"
+            "图片无法提取蓝色。"
         )
 
     model = KMeans(
@@ -430,7 +480,11 @@ def extract_image_colours(
     )
 
     cluster_rgb = lab2rgb(
-        cluster_lab.reshape(1, -1, 3)
+        cluster_lab.reshape(
+            1,
+            -1,
+            3
+        )
     ).reshape(-1, 3)
 
     cluster_rgb = np.clip(
@@ -447,6 +501,10 @@ def extract_image_colours(
         rgb = cluster_rgb[index]
         lab = cluster_lab[index]
 
+        # 再检查一次聚类中心，防止 Lab 转 RGB 后偏出蓝色色域
+        if not is_valid_blue(rgb):
+            continue
+
         results.append({
             "rgb": rgb,
             "lab": lab,
@@ -461,18 +519,23 @@ def extract_image_colours(
         reverse=True
     )
 
+    if not results:
+        raise ValueError(
+            "聚类后没有得到符合要求的蓝色。"
+        )
+
     return results
 
 
 # ============================================================
-# 5. 分析所有图片
+# 6. 分析全部图片
 # ============================================================
 
 def analyse_all_images(
 ) -> tuple[pd.DataFrame, list[dict]]:
     """
     遍历 images 文件夹中的所有图片，
-    并提取每张图片的主要颜色。
+    提取每张图片中的主要蓝色。
     """
 
     if not IMAGE_FOLDER.exists():
@@ -498,7 +561,10 @@ def analyse_all_images(
     print(
         f"找到 {len(image_files)} 张图片。"
     )
-    print("开始分析图片颜色……")
+
+    print(
+        "开始分析图片中的高饱和蓝色……"
+    )
 
     csv_rows = []
     all_colour_samples = []
@@ -516,11 +582,9 @@ def analyse_all_images(
         )
 
         try:
-            image_colours = (
-                extract_image_colours(
-                    image_path,
-                    COLOURS_PER_IMAGE
-                )
+            image_colours = extract_image_colours(
+                image_path,
+                COLOURS_PER_IMAGE
             )
 
         except (
@@ -544,9 +608,7 @@ def analyse_all_images(
         ):
             rgb = colour["rgb"]
             lab = colour["lab"]
-            proportion = colour[
-                "proportion"
-            ]
+            proportion = colour["proportion"]
 
             csv_rows.append({
                 "image_name": image_path.name,
@@ -555,6 +617,22 @@ def analyse_all_images(
                 "red": round(float(rgb[0])),
                 "green": round(float(rgb[1])),
                 "blue": round(float(rgb[2])),
+                "hue": round(
+                    calculate_hue(rgb),
+                    2
+                ),
+                "saturation": round(
+                    calculate_saturation(rgb),
+                    2
+                ),
+                "brightness": round(
+                    calculate_brightness(rgb),
+                    2
+                ),
+                "proportion_percent": round(
+                    proportion * 100,
+                    2
+                ),
                 "lab_l": round(
                     float(lab[0]),
                     2
@@ -566,10 +644,10 @@ def analyse_all_images(
                 "lab_b": round(
                     float(lab[2]),
                     2
-                ),              
+                ),
             })
 
-            # 保存给第二轮聚类
+            # 保存给第二轮总聚类
             all_colour_samples.append({
                 "lab": np.asarray(
                     lab,
@@ -582,8 +660,7 @@ def analyse_all_images(
                 "weight": float(
                     proportion
                 ),
-                "image_name":
-                    image_path.name,
+                "image_name": image_path.name,
             })
 
     if not csv_rows:
@@ -593,12 +670,11 @@ def analyse_all_images(
 
     print()
     print(
-        f"成功分析："
-        f"{successful_image_count} 张"
+        f"成功分析：{successful_image_count} 张"
     )
+
     print(
-        f"跳过图片："
-        f"{skipped_image_count} 张"
+        f"跳过图片：{skipped_image_count} 张"
     )
 
     image_colour_dataframe = (
@@ -612,17 +688,21 @@ def analyse_all_images(
 
 
 # ============================================================
-# 6. 目标导向的最终聚类
+# 7. 从全部图片中最终提取 10 个蓝色
 # ============================================================
 
 def create_final_colour_clusters(
     colour_samples: list[dict]
 ) -> pd.DataFrame:
     """
-    从全部海洋图片中提取 9 个高频蓝色，
-    再加入 #105CF4 作为品牌方向候选色。
+    从所有图片的颜色样本中聚类出 10 个蓝色。
 
-    最终不显示百分比，只输出 10 个候选色。
+    这一版：
+
+    1. 不加入固定品牌色；
+    2. 不保留非蓝色；
+    3. 最终全部 10 个颜色都来自图片；
+    4. 使用每个颜色在原图中的占比作为聚类权重。
     """
 
     if not colour_samples:
@@ -660,7 +740,7 @@ def create_final_colour_clusters(
         )
     )
 
-    # 只保留蓝色色域，同时过滤过暗、过白和低饱和颜色
+    # 最终聚类前再过滤一次
     blue_mask = (
         (hue >= BLUE_HUE_MIN)
         & (hue <= BLUE_HUE_MAX)
@@ -683,25 +763,27 @@ def create_final_colour_clusters(
 
     if len(lab_colours) == 0:
         raise ValueError(
-            "过滤后没有可用于聚类的蓝色样本。"
+            "过滤后没有可以用于聚类的蓝色样本。"
         )
 
-    # 这里只提取 9 个图片高频蓝色
-    extracted_colour_count = min(
-        FINAL_COLOUR_COUNT - 1,
+    actual_cluster_count = min(
+        FINAL_COLOUR_COUNT,
         len(lab_colours)
     )
 
     model = KMeans(
-        n_clusters=extracted_colour_count,
+        n_clusters=actual_cluster_count,
         random_state=42,
         n_init=30
     )
 
-    labels = model.fit_predict(
+    # 使用权重进行聚类
+    model.fit(
         lab_colours,
         sample_weight=sample_weights
     )
+
+    labels = model.labels_
 
     cluster_centres = (
         model.cluster_centers_
@@ -709,14 +791,29 @@ def create_final_colour_clusters(
 
     rows = []
 
+    total_weight = float(
+        sample_weights.sum()
+    )
+
     for cluster_index in range(
-        extracted_colour_count
+        actual_cluster_count
     ):
         member_indices = np.where(
             labels == cluster_index
         )[0]
 
+        if len(member_indices) == 0:
+            continue
+
         member_lab = lab_colours[
+            member_indices
+        ]
+
+        member_rgb = rgb_colours[
+            member_indices
+        ]
+
+        member_weights = sample_weights[
             member_indices
         ]
 
@@ -724,6 +821,7 @@ def create_final_colour_clusters(
             cluster_index
         ]
 
+        # 找出最接近聚类中心的真实颜色样本
         distances = np.linalg.norm(
             member_lab - centre_lab,
             axis=1
@@ -733,29 +831,29 @@ def create_final_colour_clusters(
             distances
         )
 
-        representative_index = (
-            member_indices[
-                closest_position
-            ]
-        )
+        representative_rgb = member_rgb[
+            closest_position
+        ]
 
-        representative_rgb = (
-            rgb_colours[
-                representative_index
-            ]
-        )
-
-        representative_lab = (
-            lab_colours[
-                representative_index
-            ]
-        )
+        representative_lab = member_lab[
+            closest_position
+        ]
 
         cluster_weight = float(
-            sample_weights[
-                member_indices
-            ].sum()
+            member_weights.sum()
         )
+
+        cluster_percentage = (
+            cluster_weight
+            / total_weight
+            * 100
+        )
+
+        # 最后再次确保结果属于蓝色
+        if not is_valid_blue(
+            representative_rgb
+        ):
+            continue
 
         rows.append({
             "hex": rgb_to_hex(
@@ -776,6 +874,28 @@ def create_final_colour_clusters(
                     representative_rgb[2]
                 )
             ),
+            "hue": round(
+                calculate_hue(
+                    representative_rgb
+                ),
+                2
+            ),
+            "saturation": round(
+                calculate_saturation(
+                    representative_rgb
+                ),
+                2
+            ),
+            "brightness": round(
+                calculate_brightness(
+                    representative_rgb
+                ),
+                2
+            ),
+            "frequency_percent": round(
+                cluster_percentage,
+                2
+            ),
             "lab_l": round(
                 float(
                     representative_lab[0]
@@ -794,108 +914,28 @@ def create_final_colour_clusters(
                 ),
                 2
             ),
-            "hue": round(
-                calculate_hue(
-                    representative_rgb
-                ),
-                2
-            ),
-            "saturation": round(
-                calculate_saturation(
-                    representative_rgb
-                ),
-                2
-            ),
-            "brightness": round(
-                calculate_brightness(
-                    representative_rgb
-                ),
-                2
-            ),
-            "_internal_weight":
-                cluster_weight,
         })
 
-    dataframe = pd.DataFrame(rows)
+    dataframe = pd.DataFrame(
+        rows
+    )
 
-    # 按内部权重排序
+    if dataframe.empty:
+        raise ValueError(
+            "最终没有得到符合条件的蓝色。"
+        )
+
+    # 先按照色相排列：
+    # 偏青蓝 -> 标准蓝 -> 偏紫蓝
     dataframe = dataframe.sort_values(
-        by="_internal_weight",
-        ascending=False
-    ).reset_index(drop=True)
-
-    # 删除内部权重，不写入最终 CSV
-    dataframe = dataframe.drop(
-        columns=["_internal_weight"]
-    )
-
-    # ========================================================
-    # 加入 #105CF4 作为品牌方向候选色
-    # ========================================================
-
-    brand_rgb = np.array(
-        [16, 92, 244],
-        dtype=np.float32
-    )
-
-    brand_lab = rgb2lab(
-        (
-            brand_rgb / 255.0
-        ).reshape(1, 1, 3)
-    ).reshape(3)
-
-    brand_candidate = pd.DataFrame([
-        {
-            "hex": "#105CF4",
-            "red": 16,
-            "green": 92,
-            "blue": 244,
-            "lab_l": round(
-                float(brand_lab[0]),
-                2
-            ),
-            "lab_a": round(
-                float(brand_lab[1]),
-                2
-            ),
-            "lab_b": round(
-                float(brand_lab[2]),
-                2
-            ),
-            "hue": round(
-                calculate_hue(
-                    brand_rgb
-                ),
-                2
-            ),
-            "saturation": round(
-                calculate_saturation(
-                    brand_rgb
-                ),
-                2
-            ),
-            "brightness": round(
-                calculate_brightness(
-                    brand_rgb
-                ),
-                2
-            ),
-        }
-    ])
-
-    # 合并图片提取色和品牌候选色
-    dataframe = pd.concat(
-        [
-            dataframe,
-            brand_candidate
+        by=[
+            "hue",
+            "brightness"
         ],
-        ignore_index=True
-    )
-
-    # 按明度排序，形成自然的深蓝到亮蓝色阶
-    dataframe = dataframe.sort_values(
-        by="brightness",
-        ascending=True
+        ascending=[
+            True,
+            False
+        ]
     ).reset_index(drop=True)
 
     dataframe.insert(
@@ -910,25 +950,23 @@ def create_final_colour_clusters(
     return dataframe
 
 
-
 # ============================================================
-# 8. 生成最终比例色板
+# 8. 生成横向色板
 # ============================================================
 
 def create_palette_image(
     final_colours: pd.DataFrame
 ) -> None:
     """
-    生成从 100 张海洋图片中提取的
-    10 个主要蓝色候选色。
-
-    每个色块等宽显示，不展示占比数字。
+    生成横向的 10 个蓝色色板。
     """
 
-    colour_count = len(final_colours)
+    colour_count = len(
+        final_colours
+    )
 
     figure, axis = plt.subplots(
-        figsize=(16, 5)
+        figsize=(18, 5)
     )
 
     for position, (_, row) in enumerate(
@@ -956,12 +994,14 @@ def create_palette_image(
             0,
             (
                 f"{int(row['rank']):02d}\n"
-                f"{row['hex']}"
+                f"{row['hex']}\n"
+                f"H {row['hue']:.0f}°\n"
+                f"S {row['saturation']:.0f}%"
             ),
             horizontalalignment="center",
             verticalalignment="center",
             color=get_text_colour(rgb),
-            fontsize=10,
+            fontsize=9,
             fontweight="bold"
         )
 
@@ -979,8 +1019,8 @@ def create_palette_image(
 
     axis.set_title(
         (
-            "Top 10 Ocean Colour Candidates\n"
-            "Extracted from 100 reference images"
+            "Top 10 High-Saturation Blues\n"
+            "Only blue pixels retained"
         ),
         fontsize=18,
         pad=20
@@ -990,7 +1030,7 @@ def create_palette_image(
 
     output_path = (
         OUTPUT_FOLDER
-        / "top_10_ocean_colours.png"
+        / "top_10_blue_colours.png"
     )
 
     plt.savefig(
@@ -999,10 +1039,12 @@ def create_palette_image(
         bbox_inches="tight"
     )
 
-    plt.close(figure)
+    plt.close(
+        figure
+    )
 
     print(
-        f"已生成候选色板：{output_path}"
+        f"已生成蓝色色板：{output_path}"
     )
 
 
@@ -1014,7 +1056,7 @@ def create_colour_cards(
     final_colours: pd.DataFrame
 ) -> None:
     """
-    生成 10 个海洋蓝候选色的独立色卡。
+    生成 10 个蓝色的独立色卡。
     """
 
     colour_count = len(
@@ -1025,8 +1067,11 @@ def create_colour_cards(
         nrows=colour_count,
         ncols=1,
         figsize=(
-            9,
-            max(2, colour_count * 1.2)
+            10,
+            max(
+                3,
+                colour_count * 1.25
+            )
         )
     )
 
@@ -1057,14 +1102,18 @@ def create_colour_cards(
                 f"{int(row['rank']):02d}   "
                 f"{row['hex']}   "
                 f"RGB("
-                f"{row['red']}, "
-                f"{row['green']}, "
-                f"{row['blue']})"
+                f"{int(row['red'])}, "
+                f"{int(row['green'])}, "
+                f"{int(row['blue'])})   "
+                f"H {row['hue']:.1f}°   "
+                f"S {row['saturation']:.1f}%   "
+                f"V {row['brightness']:.1f}%   "
+                f"Weight {row['frequency_percent']:.1f}%"
             ),
             transform=axis.transAxes,
             verticalalignment="center",
             color=get_text_colour(rgb),
-            fontsize=12,
+            fontsize=11,
             fontweight="bold"
         )
 
@@ -1078,7 +1127,7 @@ def create_colour_cards(
 
     output_path = (
         OUTPUT_FOLDER
-        / "top_10_ocean_colour_cards.png"
+        / "top_10_blue_colour_cards.png"
     )
 
     plt.savefig(
@@ -1087,20 +1136,157 @@ def create_colour_cards(
         bbox_inches="tight"
     )
 
-    plt.close(figure)
+    plt.close(
+        figure
+    )
 
     print(
-        f"已生成候选色卡：{output_path}"
+        f"已生成蓝色色卡：{output_path}"
     )
 
 
 # ============================================================
-# 10. 主程序
+# 10. 生成按出现频率排列的色板
+# ============================================================
+
+def create_frequency_palette(
+    final_colours: pd.DataFrame
+) -> None:
+    """
+    根据颜色在图片中的出现权重生成比例色板。
+
+    色块越宽，代表这个蓝色在图片中越常见。
+    """
+
+    frequency_colours = (
+        final_colours.sort_values(
+            by="frequency_percent",
+            ascending=False
+        ).reset_index(drop=True)
+    )
+
+    frequencies = (
+        frequency_colours[
+            "frequency_percent"
+        ].to_numpy(
+            dtype=np.float64
+        )
+    )
+
+    frequency_sum = frequencies.sum()
+
+    if frequency_sum <= 0:
+        frequencies = np.ones(
+            len(frequency_colours)
+        )
+
+        frequency_sum = frequencies.sum()
+
+    widths = (
+        frequencies / frequency_sum
+    )
+
+    figure, axis = plt.subplots(
+        figsize=(18, 5)
+    )
+
+    current_left = 0.0
+
+    for _, row in (
+        frequency_colours.iterrows()
+    ):
+        rgb = np.array(
+            [
+                row["red"],
+                row["green"],
+                row["blue"],
+            ],
+            dtype=np.float32
+        )
+
+        width = (
+            float(
+                row["frequency_percent"]
+            )
+            / frequency_sum
+        )
+
+        axis.barh(
+            y=0,
+            width=width,
+            left=current_left,
+            height=1,
+            color=rgb / 255.0
+        )
+
+        # 色块太窄时不放文字，避免重叠
+        if width >= 0.065:
+            axis.text(
+                current_left + width / 2,
+                0,
+                (
+                    f"{row['hex']}\n"
+                    f"{row['frequency_percent']:.1f}%"
+                ),
+                horizontalalignment="center",
+                verticalalignment="center",
+                color=get_text_colour(rgb),
+                fontsize=9,
+                fontweight="bold"
+            )
+
+        current_left += width
+
+    axis.set_xlim(
+        0,
+        1
+    )
+
+    axis.set_ylim(
+        -0.6,
+        0.6
+    )
+
+    axis.axis("off")
+
+    axis.set_title(
+        (
+            "Blue Colour Frequency Distribution\n"
+            "Wider blocks represent more frequent colours"
+        ),
+        fontsize=18,
+        pad=20
+    )
+
+    plt.tight_layout()
+
+    output_path = (
+        OUTPUT_FOLDER
+        / "blue_colour_frequency_palette.png"
+    )
+
+    plt.savefig(
+        output_path,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.close(
+        figure
+    )
+
+    print(
+        f"已生成蓝色频率色板：{output_path}"
+    )
+
+
+# ============================================================
+# 11. 主程序
 # ============================================================
 
 def main() -> None:
     """
-    执行完整分析流程。
+    执行完整蓝色分析流程。
     """
 
     if not IMAGE_FOLDER.exists():
@@ -1119,7 +1305,10 @@ def main() -> None:
         exist_ok=True
     )
 
-    # 第一次：分析每张图片
+    # --------------------------------------------------------
+    # 第一步：分析每张图片
+    # --------------------------------------------------------
+
     (
         image_colours,
         all_colour_samples
@@ -1127,7 +1316,7 @@ def main() -> None:
 
     image_colours_path = (
         OUTPUT_FOLDER
-        / "colours_from_each_image.csv"
+        / "blue_colours_from_each_image.csv"
     )
 
     image_colours.to_csv(
@@ -1138,11 +1327,14 @@ def main() -> None:
 
     print()
     print(
-        "每张图片的颜色数据已保存："
+        "每张图片的蓝色数据已保存："
         f"{image_colours_path}"
     )
 
-    # 第二次：目标导向的最终聚类
+    # --------------------------------------------------------
+    # 第二步：从全部图片中聚类出 10 个蓝色
+    # --------------------------------------------------------
+
     final_colours = (
         create_final_colour_clusters(
             all_colour_samples
@@ -1151,7 +1343,7 @@ def main() -> None:
 
     final_colours_path = (
         OUTPUT_FOLDER
-        / "top_10_ocean_colour_candidates.csv"
+        / "top_10_blue_colour_candidates.csv"
     )
 
     final_colours.to_csv(
@@ -1161,13 +1353,14 @@ def main() -> None:
     )
 
     print(
-        "最终颜色结果已保存："
+        "最终蓝色结果已保存："
         f"{final_colours_path}"
     )
 
-    
+    # --------------------------------------------------------
+    # 第三步：生成可视化图片
+    # --------------------------------------------------------
 
-        # 生成图片
     create_palette_image(
         final_colours
     )
@@ -1176,22 +1369,34 @@ def main() -> None:
         final_colours
     )
 
+    create_frequency_palette(
+        final_colours
+    )
+
+    # --------------------------------------------------------
+    # 第四步：终端打印结果
+    # --------------------------------------------------------
+
     print()
     print("分析完成。")
     print()
+
     print(
-        "以下为从 100 张海洋图片中提取的"
-        "前 10 个蓝色候选色："
+        "以下为图片中提取出的 10 个高饱和蓝色："
     )
 
     for _, row in final_colours.iterrows():
         print(
             f"{int(row['rank']):02d}. "
-            f"{row['hex']} "
+            f"{row['hex']}  "
             f"RGB("
-            f"{row['red']}, "
-            f"{row['green']}, "
-            f"{row['blue']})"
+            f"{int(row['red'])}, "
+            f"{int(row['green'])}, "
+            f"{int(row['blue'])})  "
+            f"H={row['hue']:.1f}°  "
+            f"S={row['saturation']:.1f}%  "
+            f"V={row['brightness']:.1f}%  "
+            f"Weight={row['frequency_percent']:.1f}%"
         )
 
 
