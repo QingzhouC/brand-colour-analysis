@@ -40,7 +40,6 @@ MIN_VALUE = 0.25
 MAX_VALUE = 0.98
 
 # 饱和度低于这个值，认为颜色太灰
-# 这次图片本身偏高饱和，所以提高到 0.40
 MIN_SATURATION = 0.40
 
 # 只保留蓝色色相
@@ -49,12 +48,19 @@ MIN_SATURATION = 0.40
 # 190°～210°：天蓝、海蓝
 # 210°～230°：标准蓝
 # 230°～250°：深蓝、偏紫蓝
-#
-# 设置为 190～250：
-# 可以过滤掉大部分绿色和青绿色，
-# 同时保留海蓝、天空蓝、钴蓝和深蓝。
 BLUE_HUE_MIN = 190
 BLUE_HUE_MAX = 250
+# ============================================================
+# 品牌蓝校准参数
+# ============================================================
+
+TARGET_BLUE = "#105CF4"
+
+# 防止平均后颜色变灰
+SATURATION_BOOST = 1.18
+
+# 防止平均后颜色变暗
+VALUE_BOOST = 1.25
 
 # 支持的图片格式
 SUPPORTED_EXTENSIONS = {
@@ -97,7 +103,10 @@ def get_text_colour(rgb: np.ndarray) -> str:
     """
 
     rgb_normalised = (
-        np.asarray(rgb, dtype=np.float32)
+        np.asarray(
+            rgb,
+            dtype=np.float32
+        )
         / 255.0
     )
 
@@ -118,7 +127,10 @@ def calculate_hue(rgb: np.ndarray) -> float:
     """
 
     red, green, blue = (
-        np.asarray(rgb, dtype=np.float32)
+        np.asarray(
+            rgb,
+            dtype=np.float32
+        )
         / 255.0
     )
 
@@ -137,7 +149,10 @@ def calculate_saturation(rgb: np.ndarray) -> float:
     """
 
     red, green, blue = (
-        np.asarray(rgb, dtype=np.float32)
+        np.asarray(
+            rgb,
+            dtype=np.float32
+        )
         / 255.0
     )
 
@@ -156,7 +171,10 @@ def calculate_brightness(rgb: np.ndarray) -> float:
     """
 
     red, green, blue = (
-        np.asarray(rgb, dtype=np.float32)
+        np.asarray(
+            rgb,
+            dtype=np.float32
+        )
         / 255.0
     )
 
@@ -306,6 +324,235 @@ def is_valid_blue(rgb: np.ndarray) -> bool:
     )
 
 
+def calculate_weighted_circular_hue(
+    hues: np.ndarray,
+    weights: np.ndarray
+) -> float:
+    """
+    计算加权平均色相。
+
+    色相是一个圆形数值：
+    0° 和 360° 实际上是同一个方向。
+
+    虽然当前蓝色色相限制在 190°～250°，
+    不会跨越 0°，但使用圆形平均算法更稳定。
+    """
+
+    hues = np.asarray(
+        hues,
+        dtype=np.float64
+    )
+
+    weights = np.asarray(
+        weights,
+        dtype=np.float64
+    )
+
+    if len(hues) == 0:
+        raise ValueError(
+            "没有可用于计算平均色相的数据。"
+        )
+
+    if len(hues) != len(weights):
+        raise ValueError(
+            "色相数量和权重数量不一致。"
+        )
+
+    valid_mask = (
+        np.isfinite(hues)
+        & np.isfinite(weights)
+        & (weights > 0)
+    )
+
+    hues = hues[
+        valid_mask
+    ]
+
+    weights = weights[
+        valid_mask
+    ]
+
+    if len(hues) == 0:
+        raise ValueError(
+            "没有有效的色相和权重数据。"
+        )
+
+    weights = (
+        weights / weights.sum()
+    )
+
+    radians = np.deg2rad(
+        hues
+    )
+
+    weighted_sine = np.sum(
+        weights * np.sin(radians)
+    )
+
+    weighted_cosine = np.sum(
+        weights * np.cos(radians)
+    )
+
+    average_angle = np.arctan2(
+        weighted_sine,
+        weighted_cosine
+    )
+
+    average_hue = (
+        np.rad2deg(average_angle)
+        % 360
+    )
+
+    return float(
+        average_hue
+    )
+
+def hsv_weighted_average_colour(
+    final_colours: pd.DataFrame
+) -> np.ndarray:
+    """
+    使用HSV空间计算最终品牌蓝。
+
+    RGB/Lab平均容易降低饱和度。
+    HSV平均可以保持高饱和蓝色。
+    """
+
+    weights = (
+        final_colours[
+            "frequency_percent"
+        ]
+        .to_numpy()
+    )
+
+    weights = (
+        weights /
+        weights.sum()
+    )
+
+
+    rgb_values = (
+        final_colours[
+            [
+                "red",
+                "green",
+                "blue"
+            ]
+        ]
+        .to_numpy()
+    )
+
+
+    hsv_values=[]
+
+
+    for rgb in rgb_values:
+
+        hsv_values.append(
+            colorsys.rgb_to_hsv(
+                rgb[0]/255,
+                rgb[1]/255,
+                rgb[2]/255
+            )
+        )
+
+
+    hsv_values=np.array(
+        hsv_values
+    )
+
+
+    # -----------------------
+    # Hue圆形平均
+    # -----------------------
+
+    angles = (
+        hsv_values[:,0]
+        *
+        2
+        *
+        np.pi
+    )
+
+
+    x=np.sum(
+        np.cos(angles)
+        *
+        weights
+    )
+
+
+    y=np.sum(
+        np.sin(angles)
+        *
+        weights
+    )
+
+
+    hue=(
+        np.arctan2(y,x)
+        /
+        (2*np.pi)
+    )
+
+
+    if hue < 0:
+        hue+=1
+
+
+
+    # -----------------------
+    # S 和 V 加权平均
+    # -----------------------
+
+    saturation=np.average(
+        hsv_values[:,1],
+        weights=weights
+    )
+
+
+    value=np.average(
+        hsv_values[:,2],
+        weights=weights
+    )
+
+
+
+    # -----------------------
+    # 品牌蓝增强
+    # -----------------------
+
+    saturation*=SATURATION_BOOST
+
+    value*=VALUE_BOOST
+
+
+    saturation=np.clip(
+        saturation,
+        0,
+        1
+    )
+
+
+    value=np.clip(
+        value,
+        0,
+        1
+    )
+
+
+    rgb=colorsys.hsv_to_rgb(
+        hue,
+        saturation,
+        value
+    )
+
+
+    return (
+        np.array(rgb)
+        *
+        255
+    )
+
 # ============================================================
 # 4. 读取图片并过滤像素
 # ============================================================
@@ -366,7 +613,6 @@ def load_image_pixels(
         )
     )
 
-    # 只保留符合条件的高饱和蓝色像素
     blue_mask = (
         (hue >= BLUE_HUE_MIN)
         & (hue <= BLUE_HUE_MAX)
@@ -384,7 +630,6 @@ def load_image_pixels(
             "图片中没有符合条件的高饱和蓝色像素。"
         )
 
-    # 每张图片最多采样固定数量，避免大图影响过大
     if len(filtered_pixels) > MAX_PIXELS_PER_IMAGE:
         random_generator = (
             np.random.default_rng(42)
@@ -398,11 +643,9 @@ def load_image_pixels(
             )
         )
 
-        filtered_pixels = (
-            filtered_pixels[
-                selected_indices
-            ]
-        )
+        filtered_pixels = filtered_pixels[
+            selected_indices
+        ]
 
     return filtered_pixels
 
@@ -435,7 +678,6 @@ def extract_image_colours(
         )
     ).reshape(-1, 3)
 
-    # 计算实际存在多少种不同颜色
     unique_colour_count = len(
         np.unique(
             np.round(
@@ -501,7 +743,6 @@ def extract_image_colours(
         rgb = cluster_rgb[index]
         lab = cluster_lab[index]
 
-        # 再检查一次聚类中心，防止 Lab 转 RGB 后偏出蓝色色域
         if not is_valid_blue(rgb):
             continue
 
@@ -635,19 +876,18 @@ def analyse_all_images(
                 ),
                 "lab_l": round(
                     float(lab[0]),
-                    2
+                    4
                 ),
                 "lab_a": round(
                     float(lab[1]),
-                    2
+                    4
                 ),
                 "lab_b": round(
                     float(lab[2]),
-                    2
+                    4
                 ),
             })
 
-            # 保存给第二轮总聚类
             all_colour_samples.append({
                 "lab": np.asarray(
                     lab,
@@ -677,8 +917,8 @@ def analyse_all_images(
         f"跳过图片：{skipped_image_count} 张"
     )
 
-    image_colour_dataframe = (
-        pd.DataFrame(csv_rows)
+    image_colour_dataframe = pd.DataFrame(
+        csv_rows
     )
 
     return (
@@ -695,14 +935,15 @@ def create_final_colour_clusters(
     colour_samples: list[dict]
 ) -> pd.DataFrame:
     """
-    从所有图片的颜色样本中聚类出 10 个蓝色。
+    从所有图片的颜色样本中聚类出最终 10 个蓝色。
 
-    这一版：
+    最终结果：
 
-    1. 不加入固定品牌色；
-    2. 不保留非蓝色；
-    3. 最终全部 10 个颜色都来自图片；
-    4. 使用每个颜色在原图中的占比作为聚类权重。
+    1. 所有颜色均来自图片；
+    2. 使用原图颜色占比作为权重；
+    3. 权重重新归一化，总和为 100%；
+    4. 最终色卡按照色相排列；
+    5. 同时保留颜色的权重排名。
     """
 
     if not colour_samples:
@@ -740,13 +981,14 @@ def create_final_colour_clusters(
         )
     )
 
-    # 最终聚类前再过滤一次
     blue_mask = (
         (hue >= BLUE_HUE_MIN)
         & (hue <= BLUE_HUE_MAX)
         & (saturation >= MIN_SATURATION)
         & (value >= MIN_VALUE)
         & (value <= MAX_VALUE)
+        & np.isfinite(sample_weights)
+        & (sample_weights > 0)
     )
 
     lab_colours = lab_colours[
@@ -766,10 +1008,24 @@ def create_final_colour_clusters(
             "过滤后没有可以用于聚类的蓝色样本。"
         )
 
+    unique_lab_colours = np.unique(
+        np.round(
+            lab_colours,
+            decimals=3
+        ),
+        axis=0
+    )
+
     actual_cluster_count = min(
         FINAL_COLOUR_COUNT,
-        len(lab_colours)
+        len(lab_colours),
+        len(unique_lab_colours)
     )
+
+    if actual_cluster_count < 1:
+        raise ValueError(
+            "没有足够的蓝色样本进行最终聚类。"
+        )
 
     model = KMeans(
         n_clusters=actual_cluster_count,
@@ -777,7 +1033,6 @@ def create_final_colour_clusters(
         n_init=30
     )
 
-    # 使用权重进行聚类
     model.fit(
         lab_colours,
         sample_weight=sample_weights
@@ -794,6 +1049,11 @@ def create_final_colour_clusters(
     total_weight = float(
         sample_weights.sum()
     )
+
+    if total_weight <= 0:
+        raise ValueError(
+            "蓝色样本权重总和小于或等于零。"
+        )
 
     for cluster_index in range(
         actual_cluster_count
@@ -821,14 +1081,13 @@ def create_final_colour_clusters(
             cluster_index
         ]
 
-        # 找出最接近聚类中心的真实颜色样本
         distances = np.linalg.norm(
             member_lab - centre_lab,
             axis=1
         )
 
-        closest_position = np.argmin(
-            distances
+        closest_position = int(
+            np.argmin(distances)
         )
 
         representative_rgb = member_rgb[
@@ -846,10 +1105,9 @@ def create_final_colour_clusters(
         cluster_percentage = (
             cluster_weight
             / total_weight
-            * 100
+            * 100.0
         )
 
-        # 最后再次确保结果属于蓝色
         if not is_valid_blue(
             representative_rgb
         ):
@@ -874,45 +1132,28 @@ def create_final_colour_clusters(
                     representative_rgb[2]
                 )
             ),
-            "hue": round(
-                calculate_hue(
-                    representative_rgb
-                ),
-                2
+            "hue": calculate_hue(
+                representative_rgb
             ),
-            "saturation": round(
-                calculate_saturation(
-                    representative_rgb
-                ),
-                2
+            "saturation": calculate_saturation(
+                representative_rgb
             ),
-            "brightness": round(
-                calculate_brightness(
-                    representative_rgb
-                ),
-                2
+            "brightness": calculate_brightness(
+                representative_rgb
             ),
-            "frequency_percent": round(
-                cluster_percentage,
-                2
+            "raw_weight": cluster_weight,
+            "frequency_percent": cluster_percentage,
+            "sample_count": int(
+                len(member_indices)
             ),
-            "lab_l": round(
-                float(
-                    representative_lab[0]
-                ),
-                2
+            "lab_l": float(
+                representative_lab[0]
             ),
-            "lab_a": round(
-                float(
-                    representative_lab[1]
-                ),
-                2
+            "lab_a": float(
+                representative_lab[1]
             ),
-            "lab_b": round(
-                float(
-                    representative_lab[2]
-                ),
-                2
+            "lab_b": float(
+                representative_lab[2]
             ),
         })
 
@@ -925,18 +1166,52 @@ def create_final_colour_clusters(
             "最终没有得到符合条件的蓝色。"
         )
 
-    # 先按照色相排列：
-    # 偏青蓝 -> 标准蓝 -> 偏紫蓝
+    visible_weight_sum = dataframe[
+        "frequency_percent"
+    ].sum()
+
+    if visible_weight_sum <= 0:
+        raise ValueError(
+            "最终颜色权重总和异常。"
+        )
+
+    dataframe[
+        "frequency_percent"
+    ] = (
+        dataframe[
+            "frequency_percent"
+        ]
+        / visible_weight_sum
+        * 100.0
+    )
+
+    dataframe[
+        "weight_rank"
+    ] = (
+        dataframe[
+            "frequency_percent"
+        ]
+        .rank(
+            method="first",
+            ascending=False
+        )
+        .astype(int)
+    )
+
     dataframe = dataframe.sort_values(
         by=[
             "hue",
-            "brightness"
+            "brightness",
+            "saturation"
         ],
         ascending=[
             True,
+            False,
             False
         ]
-    ).reset_index(drop=True)
+    ).reset_index(
+        drop=True
+    )
 
     dataframe.insert(
         0,
@@ -951,18 +1226,238 @@ def create_final_colour_clusters(
 
 
 # ============================================================
-# 8. 生成横向色板
+# 8. 计算最终加权平均蓝色
+# ============================================================
+
+def create_weighted_average_colour(
+    final_colours: pd.DataFrame
+) -> dict:
+    """
+    根据最终蓝色的权重，计算一个最终平均蓝色。
+
+    同时计算：
+
+    1. 加权平均色相；
+    2. 加权平均饱和度；
+    3. 加权平均明度；
+    4. Lab 色彩空间中的加权平均代表色。
+
+    最终 HEX 使用 Lab 加权平均色计算。
+    """
+
+    if final_colours.empty:
+        raise ValueError(
+            "没有最终颜色，无法计算平均颜色。"
+        )
+
+    weights = final_colours[
+        "frequency_percent"
+    ].to_numpy(
+        dtype=np.float64
+    )
+
+    if (
+        not np.all(np.isfinite(weights))
+        or weights.sum() <= 0
+    ):
+        raise ValueError(
+            "最终颜色权重无效。"
+        )
+
+    weights = (
+        weights / weights.sum()
+    )
+
+    hues = final_colours[
+        "hue"
+    ].to_numpy(
+        dtype=np.float64
+    )
+
+    saturations = final_colours[
+        "saturation"
+    ].to_numpy(
+        dtype=np.float64
+    )
+
+    brightness_values = final_colours[
+        "brightness"
+    ].to_numpy(
+        dtype=np.float64
+    )
+
+    lab_values = final_colours[
+        [
+            "lab_l",
+            "lab_a",
+            "lab_b"
+        ]
+    ].to_numpy(
+        dtype=np.float64
+    )
+
+    # 色相需要使用圆形平均
+    weighted_average_hue = (
+        calculate_weighted_circular_hue(
+            hues,
+            weights
+        )
+    )
+
+    weighted_average_saturation = float(
+        np.average(
+            saturations,
+            weights=weights
+        )
+    )
+
+    weighted_average_brightness = float(
+        np.average(
+            brightness_values,
+            weights=weights
+        )
+    )
+
+
+    # ==================================================
+    # 使用 HSV 平均生成最终品牌蓝
+    # ==================================================
+
+    weighted_average_rgb = (
+        hsv_weighted_average_colour(
+            final_colours
+        )
+    )
+
+
+    weighted_average_rgb = np.clip(
+        weighted_average_rgb,
+        0,
+        255
+    )
+
+
+    # 根据最终RGB重新计算Lab
+    # 只用于保存数据，不参与颜色生成
+
+    weighted_average_lab = rgb2lab(
+        (
+            weighted_average_rgb
+            /
+            255.0
+        )
+        .reshape(
+            1,
+            1,
+            3
+        )
+    ).reshape(3)
+
+    # Lab 平均颜色转换成 RGB 后，
+    # 再计算它自身实际对应的 HSV 数值
+    actual_rgb_hue = calculate_hue(
+        weighted_average_rgb
+    )
+
+    actual_rgb_saturation = (
+        calculate_saturation(
+            weighted_average_rgb
+        )
+    )
+
+    actual_rgb_brightness = (
+        calculate_brightness(
+            weighted_average_rgb
+        )
+    )
+
+    return {
+        "hex": rgb_to_hex(
+            weighted_average_rgb
+        ),
+        "rgb": weighted_average_rgb,
+        "red": int(
+            round(
+                float(
+                    weighted_average_rgb[0]
+                )
+            )
+        ),
+        "green": int(
+            round(
+                float(
+                    weighted_average_rgb[1]
+                )
+            )
+        ),
+        "blue": int(
+            round(
+                float(
+                    weighted_average_rgb[2]
+                )
+            )
+        ),
+        "weighted_average_hue": (
+            weighted_average_hue
+        ),
+        "weighted_average_saturation": (
+            weighted_average_saturation
+        ),
+        "weighted_average_brightness": (
+            weighted_average_brightness
+        ),
+        "actual_rgb_hue": (
+            actual_rgb_hue
+        ),
+        "actual_rgb_saturation": (
+            actual_rgb_saturation
+        ),
+        "actual_rgb_brightness": (
+            actual_rgb_brightness
+        ),
+        "lab_l": float(
+            weighted_average_lab[0]
+        ),
+        "lab_a": float(
+            weighted_average_lab[1]
+        ),
+        "lab_b": float(
+            weighted_average_lab[2]
+        ),
+    }
+
+
+# ============================================================
+# 9. 生成横向色板
 # ============================================================
 
 def create_palette_image(
     final_colours: pd.DataFrame
 ) -> None:
     """
-    生成横向的 10 个蓝色色板。
+    生成横向蓝色色板。
+
+    色卡按照色相排列：
+    青蓝 -> 标准蓝 -> 偏紫蓝。
     """
 
+    hue_sorted_colours = (
+        final_colours.sort_values(
+            by=[
+                "hue",
+                "brightness",
+                "saturation"
+            ],
+            ascending=[
+                True,
+                False,
+                False
+            ]
+        ).reset_index(drop=True)
+    )
+
     colour_count = len(
-        final_colours
+        hue_sorted_colours
     )
 
     figure, axis = plt.subplots(
@@ -970,7 +1465,7 @@ def create_palette_image(
     )
 
     for position, (_, row) in enumerate(
-        final_colours.iterrows()
+        hue_sorted_colours.iterrows()
     ):
         rgb = np.array(
             [
@@ -993,10 +1488,10 @@ def create_palette_image(
             position + 0.5,
             0,
             (
-                f"{int(row['rank']):02d}\n"
+                f"{position + 1:02d}\n"
                 f"{row['hex']}\n"
                 f"H {row['hue']:.0f}°\n"
-                f"S {row['saturation']:.0f}%"
+                f"{row['frequency_percent']:.1f}%"
             ),
             horizontalalignment="center",
             verticalalignment="center",
@@ -1020,7 +1515,7 @@ def create_palette_image(
     axis.set_title(
         (
             "Top 10 High-Saturation Blues\n"
-            "Only blue pixels retained"
+            "Sorted by Hue · Weight Shown on Each Colour"
         ),
         fontsize=18,
         pad=20
@@ -1030,7 +1525,7 @@ def create_palette_image(
 
     output_path = (
         OUTPUT_FOLDER
-        / "top_10_blue_colours.png"
+        / "top_10_blue_colours_hue_sorted.png"
     )
 
     plt.savefig(
@@ -1044,30 +1539,48 @@ def create_palette_image(
     )
 
     print(
-        f"已生成蓝色色板：{output_path}"
+        f"已生成按色相排列的蓝色色板：{output_path}"
     )
 
 
 # ============================================================
-# 9. 生成独立色卡
+# 10. 生成独立色卡
 # ============================================================
 
 def create_colour_cards(
     final_colours: pd.DataFrame
 ) -> None:
     """
-    生成 10 个蓝色的独立色卡。
+    生成独立蓝色色卡。
+
+    顺序按照色相排列。
+    每张色卡显示颜色权重和权重排名。
     """
 
+    hue_sorted_colours = (
+        final_colours.sort_values(
+            by=[
+                "hue",
+                "brightness",
+                "saturation"
+            ],
+            ascending=[
+                True,
+                False,
+                False
+            ]
+        ).reset_index(drop=True)
+    )
+
     colour_count = len(
-        final_colours
+        hue_sorted_colours
     )
 
     figure, axes = plt.subplots(
         nrows=colour_count,
         ncols=1,
         figsize=(
-            10,
+            12,
             max(
                 3,
                 colour_count * 1.25
@@ -1078,9 +1591,15 @@ def create_colour_cards(
     if colour_count == 1:
         axes = [axes]
 
-    for axis, (_, row) in zip(
-        axes,
-        final_colours.iterrows()
+    for position, (
+        axis,
+        (_, row)
+    ) in enumerate(
+        zip(
+            axes,
+            hue_sorted_colours.iterrows()
+        ),
+        start=1
     ):
         rgb = np.array(
             [
@@ -1099,7 +1618,7 @@ def create_colour_cards(
             0.03,
             0.5,
             (
-                f"{int(row['rank']):02d}   "
+                f"{position:02d}   "
                 f"{row['hex']}   "
                 f"RGB("
                 f"{int(row['red'])}, "
@@ -1108,12 +1627,13 @@ def create_colour_cards(
                 f"H {row['hue']:.1f}°   "
                 f"S {row['saturation']:.1f}%   "
                 f"V {row['brightness']:.1f}%   "
-                f"Weight {row['frequency_percent']:.1f}%"
+                f"Weight {row['frequency_percent']:.2f}%   "
+                f"Weight Rank #{int(row['weight_rank'])}"
             ),
             transform=axis.transAxes,
             verticalalignment="center",
             color=get_text_colour(rgb),
-            fontsize=11,
+            fontsize=10.5,
             fontweight="bold"
         )
 
@@ -1123,11 +1643,20 @@ def create_colour_cards(
         for spine in axis.spines.values():
             spine.set_visible(False)
 
+    figure.suptitle(
+        (
+            "Blue Colour Cards Sorted by Hue\n"
+            "Cyan Blue → Standard Blue → Violet Blue"
+        ),
+        fontsize=16,
+        y=1.01
+    )
+
     plt.tight_layout()
 
     output_path = (
         OUTPUT_FOLDER
-        / "top_10_blue_colour_cards.png"
+        / "top_10_blue_colour_cards_hue_sorted.png"
     )
 
     plt.savefig(
@@ -1141,12 +1670,12 @@ def create_colour_cards(
     )
 
     print(
-        f"已生成蓝色色卡：{output_path}"
+        f"已生成按色相排列的蓝色色卡：{output_path}"
     )
 
 
 # ============================================================
-# 10. 生成按出现频率排列的色板
+# 11. 生成按出现频率排列的色板
 # ============================================================
 
 def create_frequency_palette(
@@ -1165,12 +1694,10 @@ def create_frequency_palette(
         ).reset_index(drop=True)
     )
 
-    frequencies = (
-        frequency_colours[
-            "frequency_percent"
-        ].to_numpy(
-            dtype=np.float64
-        )
+    frequencies = frequency_colours[
+        "frequency_percent"
+    ].to_numpy(
+        dtype=np.float64
     )
 
     frequency_sum = frequencies.sum()
@@ -1182,19 +1709,13 @@ def create_frequency_palette(
 
         frequency_sum = frequencies.sum()
 
-    widths = (
-        frequencies / frequency_sum
-    )
-
     figure, axis = plt.subplots(
         figsize=(18, 5)
     )
 
     current_left = 0.0
 
-    for _, row in (
-        frequency_colours.iterrows()
-    ):
+    for _, row in frequency_colours.iterrows():
         rgb = np.array(
             [
                 row["red"],
@@ -1219,7 +1740,6 @@ def create_frequency_palette(
             color=rgb / 255.0
         )
 
-        # 色块太窄时不放文字，避免重叠
         if width >= 0.065:
             axis.text(
                 current_left + width / 2,
@@ -1281,7 +1801,183 @@ def create_frequency_palette(
 
 
 # ============================================================
-# 11. 主程序
+# 12. 生成最终平均蓝色色卡
+# ============================================================
+
+def create_average_colour_card(
+    average_colour: dict
+) -> None:
+    """
+    为最终 Lab 加权平均蓝色生成一张独立色卡。
+    """
+
+    rgb = np.asarray(
+        average_colour["rgb"],
+        dtype=np.float32
+    )
+
+    figure, axis = plt.subplots(
+        figsize=(12, 6)
+    )
+
+    axis.set_facecolor(
+        rgb / 255.0
+    )
+
+    axis.text(
+        0.5,
+        0.58,
+        average_colour["hex"],
+        transform=axis.transAxes,
+        horizontalalignment="center",
+        verticalalignment="center",
+        color=get_text_colour(rgb),
+        fontsize=38,
+        fontweight="bold"
+    )
+
+    axis.text(
+        0.5,
+        0.37,
+        (
+            f"RGB("
+            f"{average_colour['red']}, "
+            f"{average_colour['green']}, "
+            f"{average_colour['blue']})\n"
+            f"Weighted Average Hue "
+            f"{average_colour['weighted_average_hue']:.2f}°\n"
+            f"Lab Average Colour Hue "
+            f"{average_colour['actual_rgb_hue']:.2f}°"
+        ),
+        transform=axis.transAxes,
+        horizontalalignment="center",
+        verticalalignment="center",
+        color=get_text_colour(rgb),
+        fontsize=15,
+        fontweight="bold",
+        linespacing=1.5
+    )
+
+    axis.set_xticks([])
+    axis.set_yticks([])
+
+    for spine in axis.spines.values():
+        spine.set_visible(False)
+
+    axis.set_title(
+        "Final Weighted Average Blue",
+        fontsize=20,
+        pad=20
+    )
+
+    plt.tight_layout()
+
+    output_path = (
+        OUTPUT_FOLDER
+        / "weighted_average_blue.png"
+    )
+
+    plt.savefig(
+        output_path,
+        dpi=300,
+        bbox_inches="tight"
+    )
+
+    plt.close(
+        figure
+    )
+
+    print(
+        f"已生成最终平均蓝色色卡：{output_path}"
+    )
+
+
+# ============================================================
+# 13. 保存最终平均颜色数据
+# ============================================================
+
+def save_average_colour_data(
+    average_colour: dict
+) -> None:
+    """
+    保存最终平均蓝色的数据。
+    """
+
+    average_colour_dataframe = pd.DataFrame([
+        {
+            "hex": average_colour["hex"],
+            "red": average_colour["red"],
+            "green": average_colour["green"],
+            "blue": average_colour["blue"],
+            "weighted_average_hue": round(
+                average_colour[
+                    "weighted_average_hue"
+                ],
+                4
+            ),
+            "weighted_average_saturation": round(
+                average_colour[
+                    "weighted_average_saturation"
+                ],
+                4
+            ),
+            "weighted_average_brightness": round(
+                average_colour[
+                    "weighted_average_brightness"
+                ],
+                4
+            ),
+            "lab_average_colour_hue": round(
+                average_colour[
+                    "actual_rgb_hue"
+                ],
+                4
+            ),
+            "lab_average_colour_saturation": round(
+                average_colour[
+                    "actual_rgb_saturation"
+                ],
+                4
+            ),
+            "lab_average_colour_brightness": round(
+                average_colour[
+                    "actual_rgb_brightness"
+                ],
+                4
+            ),
+            "lab_l": round(
+                average_colour["lab_l"],
+                4
+            ),
+            "lab_a": round(
+                average_colour["lab_a"],
+                4
+            ),
+            "lab_b": round(
+                average_colour["lab_b"],
+                4
+            ),
+        }
+    ])
+
+    output_path = (
+        OUTPUT_FOLDER
+        / "weighted_average_blue.csv"
+    )
+
+    average_colour_dataframe.to_csv(
+        output_path,
+        index=False,
+        encoding="utf-8-sig"
+    )
+
+    print(
+        f"最终平均蓝色数据已保存：{output_path}"
+    )
+
+
+# ============================================================
+# 14. 主程序
 # ============================================================
 
 def main() -> None:
@@ -1346,7 +2042,30 @@ def main() -> None:
         / "top_10_blue_colour_candidates.csv"
     )
 
-    final_colours.to_csv(
+    # 输出 CSV 时单独四舍五入，
+    # 不修改程序中用于计算平均值的原始数据。
+    final_colours_for_csv = (
+        final_colours.copy()
+    )
+
+    decimal_columns = [
+        "hue",
+        "saturation",
+        "brightness",
+        "raw_weight",
+        "frequency_percent",
+        "lab_l",
+        "lab_a",
+        "lab_b",
+    ]
+
+    final_colours_for_csv[
+        decimal_columns
+    ] = final_colours_for_csv[
+        decimal_columns
+    ].round(4)
+
+    final_colours_for_csv.to_csv(
         final_colours_path,
         index=False,
         encoding="utf-8-sig"
@@ -1358,7 +2077,21 @@ def main() -> None:
     )
 
     # --------------------------------------------------------
-    # 第三步：生成可视化图片
+    # 第三步：计算最终平均色相和平均蓝色
+    # --------------------------------------------------------
+
+    average_colour = (
+        create_weighted_average_colour(
+            final_colours
+        )
+    )
+
+    save_average_colour_data(
+        average_colour
+    )
+
+    # --------------------------------------------------------
+    # 第四步：生成可视化图片
     # --------------------------------------------------------
 
     create_palette_image(
@@ -1373,21 +2106,48 @@ def main() -> None:
         final_colours
     )
 
-    # --------------------------------------------------------
-    # 第四步：终端打印结果
-    # --------------------------------------------------------
-
-    print()
-    print("分析完成。")
-    print()
-
-    print(
-        "以下为图片中提取出的 10 个高饱和蓝色："
+    create_average_colour_card(
+        average_colour
     )
 
-    for _, row in final_colours.iterrows():
+    # --------------------------------------------------------
+    # 第五步：终端打印全部结果
+    # --------------------------------------------------------
+
+    print()
+    print("=" * 90)
+    print("分析完成")
+    print("=" * 90)
+
+    hue_sorted_colours = (
+        final_colours.sort_values(
+            by=[
+                "hue",
+                "brightness",
+                "saturation"
+            ],
+            ascending=[
+                True,
+                False,
+                False
+            ]
+        ).reset_index(drop=True)
+    )
+
+    print()
+    print(
+        "按色相排列："
+        "青蓝 -> 海蓝 -> 标准蓝 -> 偏紫蓝"
+    )
+
+    print()
+
+    for position, (_, row) in enumerate(
+        hue_sorted_colours.iterrows(),
+        start=1
+    ):
         print(
-            f"{int(row['rank']):02d}. "
+            f"{position:02d}. "
             f"{row['hex']}  "
             f"RGB("
             f"{int(row['red'])}, "
@@ -1396,8 +2156,104 @@ def main() -> None:
             f"H={row['hue']:.1f}°  "
             f"S={row['saturation']:.1f}%  "
             f"V={row['brightness']:.1f}%  "
-            f"Weight={row['frequency_percent']:.1f}%"
+            f"Weight={row['frequency_percent']:.2f}%  "
+            f"Weight Rank=#{int(row['weight_rank'])}"
         )
+
+    print()
+    print("-" * 90)
+    print("按权重从高到低排列")
+    print("-" * 90)
+    print()
+
+    weight_sorted_colours = (
+        final_colours.sort_values(
+            by="frequency_percent",
+            ascending=False
+        ).reset_index(drop=True)
+    )
+
+    for position, (_, row) in enumerate(
+        weight_sorted_colours.iterrows(),
+        start=1
+    ):
+        print(
+            f"{position:02d}. "
+            f"{row['hex']}  "
+            f"Weight={row['frequency_percent']:.2f}%  "
+            f"H={row['hue']:.1f}°  "
+            f"Samples={int(row['sample_count'])}"
+        )
+
+    total_percentage = float(
+        final_colours[
+            "frequency_percent"
+        ].sum()
+    )
+
+    print()
+    print(
+        f"全部颜色权重总和："
+        f"{total_percentage:.2f}%"
+    )
+
+    print()
+    print("=" * 90)
+    print("最终加权平均结果")
+    print("=" * 90)
+    print()
+
+    print(
+        "10 个颜色的加权平均色相："
+        f"{average_colour['weighted_average_hue']:.2f}°"
+    )
+
+    print(
+        "10 个颜色的加权平均饱和度："
+        f"{average_colour['weighted_average_saturation']:.2f}%"
+    )
+
+    print(
+        "10 个颜色的加权平均明度："
+        f"{average_colour['weighted_average_brightness']:.2f}%"
+    )
+
+    print()
+    print(
+        " HSV加权平均生成的最终代表蓝色："
+    )
+
+    print(
+        f"HEX：{average_colour['hex']}"
+    )
+
+    print(
+        "RGB："
+        f"RGB("
+        f"{average_colour['red']}, "
+        f"{average_colour['green']}, "
+        f"{average_colour['blue']})"
+    )
+
+    print(
+        "最终代表色实际 HSV："
+        f"H={average_colour['actual_rgb_hue']:.2f}°  "
+        f"S={average_colour['actual_rgb_saturation']:.2f}%  "
+        f"V={average_colour['actual_rgb_brightness']:.2f}%"
+    )
+
+    print(
+        "最终代表色 Lab："
+        f"L={average_colour['lab_l']:.2f}  "
+        f"a={average_colour['lab_a']:.2f}  "
+        f"b={average_colour['lab_b']:.2f}"
+    )
+
+    print()
+    print(
+        "结果文件夹："
+        f"{OUTPUT_FOLDER.resolve()}"
+    )
 
 
 if __name__ == "__main__":

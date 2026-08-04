@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import csv
 import io
 import os
@@ -17,20 +15,20 @@ from PIL import Image, UnidentifiedImageError
 # 1. 基础设置
 # ============================================================
 
-# 不要把 API Key 直接写进代码或上传到 GitHub。
+# 不要把 Access Key 直接写进代码或上传到 GitHub。
 #
 # Mac / Linux 终端运行：
-# export PEXELS_API_KEY="你的 Pexels API Key"
+# export UNSPLASH_ACCESS_KEY="你的 Unsplash Access Key"
 #
 # Windows PowerShell 运行：
-# $env:PEXELS_API_KEY="你的 Pexels API Key"
+# $env:UNSPLASH_ACCESS_KEY="你的 Unsplash Access Key"
 
-API_KEY = os.getenv("PEXELS_API_KEY")
+ACCESS_KEY = os.getenv("UNSPLASH_ACCESS_KEY")
 
-if not API_KEY:
+if not ACCESS_KEY:
     raise ValueError(
-        "没有找到 PEXELS_API_KEY。\n"
-        "请先在终端设置 Pexels API Key。"
+        "没有找到 UNSPLASH_ACCESS_KEY。\n"
+        "请先在终端设置 Unsplash Access Key。"
     )
 
 
@@ -43,17 +41,18 @@ SAVE_FOLDER = Path("images")
 # 图片评分结果
 RESULT_CSV = Path("image_colour_scores.csv")
 
-# 本轮需要保存的图片数量
-TARGET_COUNT = 100
+# 最终需要保存的图片数量
+TARGET_COUNT = 10
 
 # 最多分析多少张候选图片
-MAX_CANDIDATES = 2000
+# 如果最后筛出的图片太少，可以改成 800 或 1000
+MAX_CANDIDATES = 100
 
 # 每个关键词最多搜索多少页
-MAX_PAGES_PER_KEYWORD = 15
+MAX_PAGES_PER_KEYWORD = 5
 
-# Pexels 每页最多返回 80 张
-PER_PAGE = 80
+# Unsplash 每页最多返回 30 张
+PER_PAGE = 30
 
 # 用于颜色分析的小图宽度
 PREVIEW_WIDTH = 400
@@ -79,37 +78,24 @@ SAVE_FOLDER.mkdir(
 # 避免 beach、sunset、coast、sky 等容易带来其他颜色的词。
 
 KEYWORDS = [
-    "bright vivid cobalt blue underwater",
-    "bright royal blue ocean water",
-    "saturated bright blue ocean underwater",
-    "electric blue underwater ocean bright",
-    "luminous cobalt blue sea",
-    "bright ultramarine ocean water",
-    "bright blue ocean water close up",
-    "vivid blue sea surface sunlight",
-    "bright vivid blue underwater light",
-    "bright saturated blue ocean",
-    "cobalt blue water abstract bright",
-    "high saturation bright blue sea",
-    "bright blue underwater photography",
-    "bright blue ocean texture no sky",
-    "vivid blue water sunlight",
-    "bright ocean blue glow",
-    "luminous blue water close up",
-    "bright intense blue underwater",
-    "blue ocean wave close up",
-    "blue sea water surface",
-    "turquoise blue ocean bright",
-    "azure blue water sea",
-    "sapphire blue ocean water",
-    "indigo blue underwater sea",
-    "neon blue ocean water",
-    "bright blue water ripple",
-    "blue sea abstract pattern",
-    "deep blue sea wave",
-    "ocean blue gradient water",
-    "blue water texture bright",
-    "crystal blue ocean water",
+    "vivid cobalt blue underwater",
+    "deep royal blue underwater",
+    "saturated blue ocean underwater",
+    "electric blue underwater ocean",
+    "intense cobalt blue sea",
+    "ultramarine ocean water texture",
+    "deep blue ocean water close up",
+    "royal blue sea surface texture",
+    "vivid blue underwater light",
+    "dark saturated blue ocean",
+    "cobalt blue water abstract",
+    "high saturation blue sea",
+    "deep blue underwater photography",
+    "blue ocean texture no sky",
+    "cobalt blue underwater animal",
+    "deep ocean blue glow",
+    "ultramarine water close up",
+    "intense blue underwater photography",
 ]
 
 
@@ -131,50 +117,38 @@ MIN_BLUE_PIXEL_SATURATION = 0.45
 HIGH_SATURATION_THRESHOLD = 0.62
 
 # 图片中蓝色像素最低占比
-MIN_BLUE_RATIO = 0.45
+MIN_BLUE_RATIO = 0.60
 
 # 图片中高饱和像素最低占比
-MIN_HIGH_SATURATION_RATIO = 0.40
+MIN_HIGH_SATURATION_RATIO = 0.52
 
 # 更贴近 #105CF4 的核心蓝色色相范围
 CORE_BLUE_HUE_MIN = 0.58
 CORE_BLUE_HUE_MAX = 0.67
 
 # 图片中核心蓝色最低占比
-MIN_CORE_BLUE_RATIO = 0.10
+MIN_CORE_BLUE_RATIO = 0.20
 
 # 图片整体最低平均饱和度
-MIN_MEAN_SATURATION = 0.45
+MIN_MEAN_SATURATION = 0.55
 
 # 蓝色区域内部最低平均饱和度
-MIN_BLUE_SATURATION = 0.50
+MIN_BLUE_SATURATION = 0.62
 
 # 允许有高饱和深蓝，但限制无色黑色区域
-MAX_NEUTRAL_DARK_RATIO = 0.12
+MAX_NEUTRAL_DARK_RATIO = 0.18
 
 # 允许少量白色反光或浪花
-MAX_WHITE_RATIO = 0.15
+MAX_WHITE_RATIO = 0.12
 
 # 允许少量灰色和低饱和区域
 MAX_GREY_RATIO = 0.18
 
 # 偏青绿色区域最大比例
-MAX_CYAN_GREEN_RATIO = 0.25
+MAX_CYAN_GREEN_RATIO = 0.20
 
 # 偏紫区域最大比例
-MAX_PURPLE_RATIO = 0.15
-
-# 图片整体最低平均亮度（HSV Value）
-MIN_MEAN_VALUE = 0.30
-
-# 蓝色区域内部最低平均亮度
-MIN_BLUE_VALUE = 0.25
-
-# 蓝色像素最低亮度门槛
-MIN_BLUE_PIXEL_VALUE = 0.15
-
-# 核心蓝色像素最低亮度门槛
-MIN_CORE_BLUE_PIXEL_VALUE = 0.20
+MAX_PURPLE_RATIO = 0.12
 
 
 # ============================================================
@@ -312,25 +286,22 @@ def open_image_from_bytes(
         return None
 
 
-def build_pexels_image_url(
-    original_url: str,
+def build_unsplash_image_url(
+    raw_url: str,
     *,
     width: int,
+    quality: int,
 ) -> str:
-    """
-    构造指定宽度的 Pexels 图片地址。
+    """构造指定宽度和质量的 Unsplash 图片地址。"""
 
-    Pexels 的 original URL 支持通过 query 参数
-    控制压缩方式和宽度。
-    """
-
-    separator = "&" if "?" in original_url else "?"
+    separator = "&" if "?" in raw_url else "?"
 
     return (
-        f"{original_url}"
-        f"{separator}auto=compress"
-        f"&cs=tinysrgb"
-        f"&w={width}"
+        f"{raw_url}"
+        f"{separator}w={width}"
+        f"&q={quality}"
+        f"&fit=max"
+        f"&auto=format"
     )
 
 
@@ -383,7 +354,7 @@ def analyse_image_colour(
         (hue >= MIN_BLUE_HUE)
         & (hue <= MAX_BLUE_HUE)
         & (saturation >= MIN_BLUE_PIXEL_SATURATION)
-        & (value >= MIN_BLUE_PIXEL_VALUE)
+        & (value >= 0.04)
     )
 
     # 更贴近目标品牌蓝色的核心区域
@@ -391,7 +362,7 @@ def analyse_image_colour(
         (hue >= CORE_BLUE_HUE_MIN)
         & (hue <= CORE_BLUE_HUE_MAX)
         & (saturation >= 0.55)
-        & (value >= MIN_CORE_BLUE_PIXEL_VALUE)
+        & (value >= 0.05)
     )
 
     # 高饱和像素
@@ -412,7 +383,7 @@ def analyse_image_colour(
     # 无色黑色
     # 高饱和深蓝不会被算作坏暗部
     neutral_dark_mask = (
-        (value < 0.20)
+        (value < 0.12)
         & (saturation < 0.35)
     )
 
@@ -550,31 +521,25 @@ def analyse_image_colour(
 
     score = (
         # 蓝色面积
-        blue_ratio * 30
+        blue_ratio * 35
 
         # 高饱和蓝色面积
-        + vivid_blue_ratio * 25
+        + vivid_blue_ratio * 30
 
         # 核心皇家蓝、钴蓝面积
-        + core_blue_ratio * 15
+        + core_blue_ratio * 18
 
         # 整体饱和度
-        + mean_saturation * 10
+        + mean_saturation * 12
 
         # 蓝色区域饱和度
-        + blue_saturation * 8
+        + blue_saturation * 10
 
         # 与目标色相的接近程度
         + target_hue_similarity * 10
 
-        # 整体亮度（新增，鼓励明亮图片）
-        + mean_value * 18
-
-        # 蓝色区域亮度（新增，鼓励明亮蓝色）
-        + blue_value * 14
-
-        # 无色暗部扣分（加重惩罚）
-        - neutral_dark_ratio * 35
+        # 无色暗部扣分
+        - neutral_dark_ratio * 22
 
         # 白色区域扣分
         - white_ratio * 20
@@ -599,8 +564,6 @@ def analyse_image_colour(
         and core_blue_ratio >= MIN_CORE_BLUE_RATIO
         and mean_saturation >= MIN_MEAN_SATURATION
         and blue_saturation >= MIN_BLUE_SATURATION
-        and mean_value >= MIN_MEAN_VALUE
-        and blue_value >= MIN_BLUE_VALUE
         and neutral_dark_ratio <= MAX_NEUTRAL_DARK_RATIO
         and white_ratio <= MAX_WHITE_RATIO
         and grey_ratio <= MAX_GREY_RATIO
@@ -636,86 +599,21 @@ def analyse_image_colour(
 
 
 # ============================================================
-# 7. 搜索 Pexels 候选图片
+# 7. 搜索 Unsplash 候选图片
 # ============================================================
 
-def load_existing_photo_ids() -> set[int]:
-    """从已有的 CSV 评分表中加载已下载的图片 ID。"""
-
-    existing_ids: set[int] = set()
-
-    if not RESULT_CSV.exists():
-        return existing_ids
-
-    try:
-        with open(
-            RESULT_CSV,
-            "r",
-            newline="",
-            encoding="utf-8-sig",
-        ) as csv_file:
-            reader = csv.DictReader(csv_file)
-
-            for row in reader:
-                photo_id_str = row.get("id", "")
-
-                if photo_id_str:
-                    try:
-                        existing_ids.add(
-                            int(photo_id_str)
-                        )
-                    except ValueError:
-                        pass
-
-        print(
-            f"已加载 {len(existing_ids)} 个已下载图片 ID，"
-            f"将跳过这些图片。"
-        )
-
-    except OSError as error:
-        print(
-            f"读取已有 CSV 失败：{error}"
-        )
-
-    return existing_ids
-
-
-def get_next_filename_index() -> int:
-    """获取下一个可用的文件编号。"""
-
-    max_index = 0
-
-    if SAVE_FOLDER.exists():
-        for filepath in SAVE_FOLDER.glob("sea_*.jpg"):
-            name = filepath.stem  # e.g. "sea_001"
-
-            try:
-                index = int(name.split("_")[1])
-                if index > max_index:
-                    max_index = index
-            except (IndexError, ValueError):
-                continue
-
-    return max_index + 1
-
-
-def search_candidates(
-    exclude_ids: set[int] | None = None,
-) -> list[dict[str, Any]]:
-    """从 Pexels 搜索候选图片，跳过已下载的图片 ID。"""
+def search_candidates() -> list[dict[str, Any]]:
+    """从 Unsplash 搜索候选图片。"""
 
     headers = {
-        "Authorization": API_KEY
+        "Authorization": f"Client-ID {ACCESS_KEY}"
     }
 
-    search_url = "https://api.pexels.com/v1/search"
+    search_url = "https://api.unsplash.com/search/photos"
 
     candidates: list[dict[str, Any]] = []
 
-    collected_photo_ids: set[int] = set()
-
-    if exclude_ids:
-        collected_photo_ids |= exclude_ids
+    collected_photo_ids: set[str] = set()
 
     for keyword in KEYWORDS:
         if len(candidates) >= MAX_CANDIDATES:
@@ -735,6 +633,8 @@ def search_candidates(
                 "page": page,
                 "per_page": PER_PAGE,
                 "orientation": "landscape",
+                "content_filter": "high",
+                "color": "blue",
             }
 
             data = request_json(
@@ -751,7 +651,7 @@ def search_candidates(
                 break
 
             photos = data.get(
-                "photos",
+                "results",
                 [],
             )
 
@@ -764,49 +664,46 @@ def search_candidates(
 
                 photo_id = photo.get("id")
 
-                if photo_id is None:
+                if not photo_id:
                     continue
 
                 if photo_id in collected_photo_ids:
                     continue
 
-                src = photo.get(
-                    "src",
+                urls = photo.get(
+                    "urls",
                     {},
                 )
 
-                original_url = src.get("original")
+                raw_url = urls.get("raw")
 
-                if not original_url:
-                    # 退而使用 large2x
-                    original_url = src.get("large2x")
-
-                if not original_url:
+                if not raw_url:
                     continue
 
                 collected_photo_ids.add(photo_id)
 
-                preview_url = build_pexels_image_url(
-                    original_url,
+                preview_url = build_unsplash_image_url(
+                    raw_url,
                     width=PREVIEW_WIDTH,
+                    quality=60,
                 )
 
-                photographer = photo.get(
-                    "photographer",
-                    "",
+                photographer = (
+                    photo.get("user", {})
+                    .get("name", "")
                 )
 
-                photo_url = photo.get(
-                    "url",
-                    "",
+                download_location = (
+                    photo.get("links", {})
+                    .get("download_location")
                 )
 
                 candidates.append({
                     "id": photo_id,
                     "keyword": keyword,
                     "preview_url": preview_url,
-                    "original_url": original_url,
-                    "photo_url": photo_url,
+                    "raw_url": raw_url,
+                    "download_location": download_location,
                     "photographer": photographer,
                 })
 
@@ -888,7 +785,39 @@ def score_candidates(
 
 
 # ============================================================
-# 9. 保存最终图片
+# 9. Unsplash 下载统计
+# ============================================================
+
+def trigger_unsplash_download(
+    download_location: str | None,
+) -> None:
+    """
+    根据 Unsplash API 规范触发下载统计。
+
+    这不会保存图片，只用于通知 Unsplash
+    某张图片被下载。
+    """
+
+    if not download_location:
+        return
+
+    headers = {
+        "Authorization": f"Client-ID {ACCESS_KEY}"
+    }
+
+    try:
+        requests.get(
+            download_location,
+            headers=headers,
+            timeout=15,
+        )
+
+    except requests.RequestException:
+        pass
+
+
+# ============================================================
+# 10. 保存最终图片
 # ============================================================
 
 def download_final_images(
@@ -900,24 +829,22 @@ def download_final_images(
 
     saved_results: list[dict[str, Any]] = []
 
-    start_index = get_next_filename_index()
-
-    for offset, candidate in enumerate(
+    for index, candidate in enumerate(
         selected,
+        start=1,
     ):
-        index = start_index + offset
-
         filename = SAVE_FOLDER / (
             f"sea_{index:03d}.jpg"
         )
 
-        original_url = str(
-            candidate["original_url"]
+        raw_url = str(
+            candidate["raw_url"]
         )
 
-        final_url = build_pexels_image_url(
-            original_url,
+        final_url = build_unsplash_image_url(
+            raw_url,
             width=FINAL_IMAGE_WIDTH,
+            quality=85,
         )
 
         print(
@@ -958,6 +885,12 @@ def download_final_images(
             )
             continue
 
+        trigger_unsplash_download(
+            candidate.get(
+                "download_location"
+            )
+        )
+
         candidate["filename"] = filename.name
 
         saved_results.append(
@@ -970,13 +903,13 @@ def download_final_images(
 
 
 # ============================================================
-# 10. 输出评分 CSV
+# 11. 输出评分 CSV
 # ============================================================
 
 def save_score_csv(
     results: list[dict[str, Any]],
 ) -> None:
-    """追加保存每张最终图片的颜色评分。"""
+    """保存每张最终图片的颜色评分。"""
 
     fieldnames = [
         "filename",
@@ -1007,12 +940,10 @@ def save_score_csv(
         "purple_ratio",
     ]
 
-    file_exists = RESULT_CSV.exists()
-
     try:
         with open(
             RESULT_CSV,
-            "a",
+            "w",
             newline="",
             encoding="utf-8-sig",
         ) as csv_file:
@@ -1021,8 +952,7 @@ def save_score_csv(
                 fieldnames=fieldnames,
             )
 
-            if not file_exists:
-                writer.writeheader()
+            writer.writeheader()
 
             for result in results:
                 row = {
@@ -1042,12 +972,12 @@ def save_score_csv(
 
 
 # ============================================================
-# 11. 执行
+# 12. 执行
 # ============================================================
 
 def main() -> None:
     print("=" * 60)
-    print("高饱和蓝色海洋图片筛选（Pexels）")
+    print("高饱和蓝色海洋图片筛选")
     print("=" * 60)
 
     print(
@@ -1069,11 +999,7 @@ def main() -> None:
         f"最大候选图片数量：{MAX_CANDIDATES}"
     )
 
-    existing_ids = load_existing_photo_ids()
-
-    candidates = search_candidates(
-        exclude_ids=existing_ids,
-    )
+    candidates = search_candidates()
 
     if not candidates:
         print(
@@ -1097,8 +1023,7 @@ def main() -> None:
             "\n1. 将 MIN_BLUE_RATIO 改为 0.50"
             "\n2. 将 MIN_HIGH_SATURATION_RATIO 改为 0.45"
             "\n3. 将 MIN_CORE_BLUE_RATIO 改为 0.15"
-            "\n4. 将 MAX_CANDIDATES 提高到 1000"
-            "\n5. 增加 MAX_PAGES_PER_KEYWORD 以搜索更多页面"
+            "\n4. 将 MAX_CANDIDATES 提高到 800"
         )
         return
 
